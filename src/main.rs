@@ -1,0 +1,125 @@
+//! This is a Discord Bot that notifies a Channel and Group when a new F1 or
+//! F1-Feeder session starts.
+
+use std::{fmt::Write, str::FromStr};
+
+use axum::{
+    body::{Body, Bytes},
+    extract::State,
+    http::{HeaderMap, Request},
+    response::IntoResponse,
+    routing::post,
+};
+use ed25519_dalek::{Signature, VerifyingKey};
+use reqwest::StatusCode;
+use sentry::{integrations::tracing::EventFilter, types::Dsn};
+use sha2::Digest;
+use tower::ServiceBuilder;
+use tracing::info;
+use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[derive(Clone, Debug)]
+struct AxumState<'a> {
+    pub public_key: &'a VerifyingKey,
+}
+
+fn main() {
+    _ = dotenvy::dotenv();
+    let mut sentry_client = None;
+    if let Ok(dsn) = std::env::var("SENTRY_DSN") {
+        sentry_client = Some(sentry::init(sentry::ClientOptions {
+            release: sentry::release_name!(),
+            dsn: Some(Dsn::from_str(&dsn).expect("Valid DSN")),
+            sample_rate: 1.0,
+            traces_sample_rate: 1.0,
+            ..Default::default()
+        }));
+    };
+
+    tracing_subscriber::registry()
+        .with(tracing_subscriber::fmt::layer())
+        .with(
+            sentry::integrations::tracing::layer().event_filter(|f| match *f.level() {
+                tracing::Level::ERROR => EventFilter::Event,
+                tracing::Level::INFO => EventFilter::Log | EventFilter::Breadcrumb,
+                tracing::Level::WARN => EventFilter::Log | EventFilter::Breadcrumb,
+                _ => EventFilter::Ignore,
+            }),
+        )
+        .init();
+    info!("App Start up at {}", chrono::Utc::now());
+    sentry::start_session();
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .unwrap()
+        .block_on(async {
+
+        let mut public_key = [0u8; 32];
+        hex::decode_to_slice(std::env::var("PUBLIC_KEY").unwrap(), &mut public_key).unwrap();
+        let vk = Box::leak(Box::new(VerifyingKey::from_bytes(&public_key).unwrap()));
+
+            let router = axum::Router::new()
+                .route("/interaction", post(interaction))
+                .with_state(AxumState {
+                    public_key: vk,
+                })
+                .fallback(fallback)
+                .layer(ServiceBuilder::new()
+                    .layer(sentry::integrations::tower::NewSentryLayer::<Request<Body>>::new_from_top())
+                    .layer(sentry::integrations::tower::SentryHttpLayer::new().enable_transaction())
+                )
+                .into_make_service();
+
+            let tcp_listener = tokio::net::TcpListener::bind("127.1.3.5:80").await.unwrap();
+            info!("Listener bound to {}", tcp_listener.local_addr().unwrap());
+            axum::serve(tcp_listener, router)
+                .with_graceful_shutdown(async {
+                    tokio::signal::ctrl_c().await.unwrap();
+                })
+                .await
+                .unwrap();
+        });
+    sentry::end_session_with_status(sentry::protocol::SessionStatus::Ok);
+    if let Some(client) = sentry::Hub::current().client() {
+        client.close(Some(std::time::Duration::from_secs(2)));
+    }
+    drop(sentry_client);
+}
+
+async fn fallback() -> (StatusCode, &'static str) {
+    (StatusCode::NOT_FOUND, "Not Found.")
+}
+
+#[derive(serde::Serialize)]
+struct DiscordResponse {
+    #[serde(rename = "type")]
+    kind: u32,
+}
+
+async fn interaction(State(state): State<AxumState<'_>>, headers: HeaderMap, body: String) -> impl IntoResponse {
+    let (Some(signature), Some(timestamp)) = (
+        headers.get("X-Signature-Ed25519"),
+        headers.get("X-Signature-Timestamp"),
+    ) else {
+        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned());
+    };
+
+    let (Ok(signature), Ok(timestamp)) = (signature.to_str(), timestamp.to_str()) else {
+        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned())
+    };
+
+
+    let mut decoded_signature = [0u8; 64];
+    hex::decode_to_slice(signature, &mut decoded_signature).unwrap();
+    let sign = Signature::from_bytes(&decoded_signature);
+    let mut message = String::with_capacity(timestamp.len() + body.len());
+    message.write_str(timestamp).unwrap();
+    message.write_str(&body).unwrap();
+    if let Err(why) = state.public_key.verify_strict(message.as_bytes(), &sign) {
+        info!("{why}");
+        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned());
+    }
+    let response = serde_json::to_string(&DiscordResponse { kind: 1 } ).unwrap();
+    (StatusCode::NO_CONTENT, HeaderMap::new(), response)
+}
