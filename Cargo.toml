@@ -2,6 +2,11 @@
 name = "f1-notifications"
 version = "0.1.0"
 edition = "2024"
+default-run = "f1-notifications"
+
+[[bin]]
+name = "docker-build"
+path = "tools/docker-build.rs"
 
 [dependencies]
 axum = { version = "0.8.7", features = ["json"] }

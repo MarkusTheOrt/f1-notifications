@@ -4,7 +4,7 @@
 use std::{fmt::Write, str::FromStr};
 
 use axum::{
-    body::{Body, Bytes},
+    body::Body,
     extract::State,
     http::{HeaderMap, Request},
     response::IntoResponse,
@@ -13,7 +13,6 @@ use axum::{
 use ed25519_dalek::{Signature, VerifyingKey};
 use reqwest::StatusCode;
 use sentry::{integrations::tracing::EventFilter, types::Dsn};
-use sha2::Digest;
 use tower::ServiceBuilder;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
@@ -97,18 +96,29 @@ struct DiscordResponse {
     kind: u32,
 }
 
-async fn interaction(State(state): State<AxumState<'_>>, headers: HeaderMap, body: String) -> impl IntoResponse {
+async fn interaction(
+    State(state): State<AxumState<'_>>,
+    headers: HeaderMap,
+    body: String,
+) -> impl IntoResponse {
     let (Some(signature), Some(timestamp)) = (
         headers.get("X-Signature-Ed25519"),
         headers.get("X-Signature-Timestamp"),
     ) else {
-        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned());
+        return (
+            StatusCode::UNAUTHORIZED,
+            HeaderMap::new(),
+            "Unauthorized.".to_owned(),
+        );
     };
 
     let (Ok(signature), Ok(timestamp)) = (signature.to_str(), timestamp.to_str()) else {
-        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned())
+        return (
+            StatusCode::UNAUTHORIZED,
+            HeaderMap::new(),
+            "Unauthorized.".to_owned(),
+        );
     };
-
 
     let mut decoded_signature = [0u8; 64];
     hex::decode_to_slice(signature, &mut decoded_signature).unwrap();
@@ -118,8 +128,12 @@ async fn interaction(State(state): State<AxumState<'_>>, headers: HeaderMap, bod
     message.write_str(&body).unwrap();
     if let Err(why) = state.public_key.verify_strict(message.as_bytes(), &sign) {
         info!("{why}");
-        return (StatusCode::UNAUTHORIZED, HeaderMap::new(), "Unauthorized.".to_owned());
+        return (
+            StatusCode::UNAUTHORIZED,
+            HeaderMap::new(),
+            "Unauthorized.".to_owned(),
+        );
     }
-    let response = serde_json::to_string(&DiscordResponse { kind: 1 } ).unwrap();
+    let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
     (StatusCode::NO_CONTENT, HeaderMap::new(), response)
 }
