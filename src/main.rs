@@ -19,6 +19,7 @@ use tower::ServiceBuilder;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
+#[allow(dead_code)]
 #[derive(Debug, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 enum Interaction {
@@ -51,25 +52,29 @@ impl<'de> Deserialize<'de> for InteractionData {
             .get("type")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| serde::de::Error::custom("Missing Type"))?;
+
+        let obj = value
+            .get("data")
+            .ok_or_else(|| serde::de::Error::missing_field("data"))?;
         match t {
             1 => Ok(InteractionData::Ping),
             2 => Ok(Self::ApplicationCommand(
-                serde_json::from_value::<Testing>(value)
+                serde_json::from_value::<Testing>(obj.clone())
                     .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
             )),
 
             3 => Ok(Self::MessageComponent(
-                serde_json::from_value::<Testing>(value)
+                serde_json::from_value::<Testing>(obj.clone())
                     .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
             )),
 
             4 => Ok(Self::Autocomplete(
-                serde_json::from_value::<Testing>(value)
+                serde_json::from_value::<Testing>(obj.clone())
                     .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
             )),
 
             5 => Ok(Self::ModalSubmit(
-                serde_json::from_value::<Testing>(value)
+                serde_json::from_value::<Testing>(obj.to_owned())
                     .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
             )),
             _ => Err(serde::de::Error::custom(format!(
@@ -82,12 +87,10 @@ impl<'de> Deserialize<'de> for InteractionData {
 #[allow(dead_code)]
 #[derive(serde::Deserialize, Debug)]
 struct InteractionReceive {
-    pub id: u64,
-    pub application_id: u64,
+    pub id: String,
+    pub application_id: String,
     #[serde(rename = "type")]
-    pub kind: Interaction,
-    #[serde(flatten)]
-    pub data: Option<InteractionData>,
+    pub kind: InteractionData,
 }
 
 #[derive(Clone, Debug)]
@@ -211,29 +214,14 @@ async fn interaction(
     let serialized_body: InteractionReceive = serde_json::from_str(&body).unwrap();
     println!("{serialized_body:#?}");
     match serialized_body.kind {
-        Interaction::Ping => {
+        InteractionData::Ping => {
             let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
             let mut headers = HeaderMap::new();
             headers.append(CONTENT_TYPE, "application/json".parse().unwrap());
 
             (StatusCode::OK, headers, response)
         }
-        Interaction::ApplicationCommand => (
-            StatusCode::ACCEPTED,
-            HeaderMap::new(),
-            String::with_capacity(0),
-        ),
-        Interaction::MessageComponent => (
-            StatusCode::ACCEPTED,
-            HeaderMap::new(),
-            String::with_capacity(0),
-        ),
-        Interaction::Autocomplete => (
-            StatusCode::ACCEPTED,
-            HeaderMap::new(),
-            String::with_capacity(0),
-        ),
-        Interaction::ModalSubmit => (
+        _ => (
             StatusCode::ACCEPTED,
             HeaderMap::new(),
             String::with_capacity(0),
