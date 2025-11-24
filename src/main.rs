@@ -19,7 +19,6 @@ use tower::ServiceBuilder;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
-#[allow(dead_code)]
 #[derive(Debug, Serialize_repr, Deserialize_repr)]
 #[repr(u8)]
 enum Interaction {
@@ -30,9 +29,11 @@ enum Interaction {
     ModalSubmit,
 }
 
+#[allow(dead_code)]
 #[derive(serde::Deserialize, Debug)]
 struct Testing;
 
+#[allow(dead_code)]
 #[derive(Debug)]
 enum InteractionData {
     Ping,
@@ -49,7 +50,7 @@ impl<'de> Deserialize<'de> for InteractionData {
     {
         let value = serde_json::Value::deserialize(deserializer)?;
         let t = value
-            .get("type")
+            .get("kind")
             .and_then(|v| v.as_u64())
             .ok_or_else(|| serde::de::Error::custom("Missing Type"))?;
 
@@ -90,7 +91,7 @@ struct InteractionReceive {
     pub id: String,
     pub application_id: String,
     #[serde(rename = "type")]
-    pub kind: InteractionData,
+    pub kind: Interaction,
 }
 
 #[derive(Clone, Debug)]
@@ -214,7 +215,7 @@ async fn interaction(
     let serialized_body: InteractionReceive = serde_json::from_str(&body).unwrap();
     println!("{serialized_body:#?}");
     match serialized_body.kind {
-        InteractionData::Ping => {
+        Interaction::Ping => {
             let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
             let mut headers = HeaderMap::new();
             headers.append(CONTENT_TYPE, "application/json".parse().unwrap());
