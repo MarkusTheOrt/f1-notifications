@@ -11,7 +11,7 @@ use axum::{
     routing::post,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
-use reqwest::StatusCode;
+use reqwest::{header::CONTENT_TYPE, StatusCode};
 use sentry::{integrations::tracing::EventFilter, types::Dsn};
 use tower::ServiceBuilder;
 use tracing::info;
@@ -135,5 +135,7 @@ async fn interaction(
         );
     }
     let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
-    (StatusCode::NO_CONTENT, HeaderMap::new(), response)
+    let mut headers = HeaderMap::new();
+    headers.append(CONTENT_TYPE, "application/json".parse().unwrap());
+    (StatusCode::OK, headers, response)
 }
