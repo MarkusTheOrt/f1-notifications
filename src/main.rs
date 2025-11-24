@@ -13,9 +13,82 @@ use axum::{
 use ed25519_dalek::{Signature, VerifyingKey};
 use reqwest::{StatusCode, header::CONTENT_TYPE};
 use sentry::{integrations::tracing::EventFilter, types::Dsn};
+use serde::Deserialize;
+use serde_repr::{Deserialize_repr, Serialize_repr};
 use tower::ServiceBuilder;
 use tracing::info;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+
+#[derive(Debug, Serialize_repr, Deserialize_repr)]
+#[repr(u8)]
+enum Interaction {
+    Ping = 1,
+    ApplicationCommand,
+    MessageComponent,
+    Autocomplete,
+    ModalSubmit,
+}
+
+#[derive(serde::Deserialize, Debug)]
+struct Testing;
+
+#[derive(Debug)]
+enum InteractionData {
+    Ping,
+    ApplicationCommand(Testing),
+    MessageComponent(Testing),
+    Autocomplete(Testing),
+    ModalSubmit(Testing),
+}
+
+impl<'de> Deserialize<'de> for InteractionData {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        let t = value
+            .get("type")
+            .and_then(|v| v.as_u64())
+            .ok_or_else(|| serde::de::Error::custom("Missing Type"))?;
+        match t {
+            1 => Ok(InteractionData::Ping),
+            2 => Ok(Self::ApplicationCommand(
+                serde_json::from_value::<Testing>(value)
+                    .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
+            )),
+
+            3 => Ok(Self::MessageComponent(
+                serde_json::from_value::<Testing>(value)
+                    .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
+            )),
+
+            4 => Ok(Self::Autocomplete(
+                serde_json::from_value::<Testing>(value)
+                    .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
+            )),
+
+            5 => Ok(Self::ModalSubmit(
+                serde_json::from_value::<Testing>(value)
+                    .map_err(|v| serde::de::Error::custom(format!("{v}")))?,
+            )),
+            _ => Err(serde::de::Error::custom(format!(
+                "Unknown interaction type {t}"
+            ))),
+        }
+    }
+}
+
+#[allow(dead_code)]
+#[derive(serde::Deserialize, Debug)]
+struct InteractionReceive {
+    pub id: u64,
+    pub application_id: u64,
+    #[serde(rename = "type")]
+    pub kind: Interaction,
+    #[serde(flatten)]
+    pub data: Option<InteractionData>,
+}
 
 #[derive(Clone, Debug)]
 struct AxumState<'a> {
@@ -70,7 +143,7 @@ fn main() {
                 )
                 .into_make_service();
 
-            let tcp_listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
+            let tcp_listener = tokio::net::TcpListener::bind("0.0.0.0:8123").await.unwrap();
             info!("Listener bound to {}", tcp_listener.local_addr().unwrap());
             axum::serve(tcp_listener, router)
                 .with_graceful_shutdown(async {
@@ -134,8 +207,36 @@ async fn interaction(
             "Unauthorized.".to_owned(),
         );
     }
-    let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
-    let mut headers = HeaderMap::new();
-    headers.append(CONTENT_TYPE, "application/json".parse().unwrap());
-    (StatusCode::OK, headers, response)
+
+    let serialized_body: InteractionReceive = serde_json::from_str(&body).unwrap();
+    println!("{serialized_body:#?}");
+    match serialized_body.kind {
+        Interaction::Ping => {
+            let response = serde_json::to_string(&DiscordResponse { kind: 1 }).unwrap();
+            let mut headers = HeaderMap::new();
+            headers.append(CONTENT_TYPE, "application/json".parse().unwrap());
+
+            (StatusCode::OK, headers, response)
+        }
+        Interaction::ApplicationCommand => (
+            StatusCode::ACCEPTED,
+            HeaderMap::new(),
+            String::with_capacity(0),
+        ),
+        Interaction::MessageComponent => (
+            StatusCode::ACCEPTED,
+            HeaderMap::new(),
+            String::with_capacity(0),
+        ),
+        Interaction::Autocomplete => (
+            StatusCode::ACCEPTED,
+            HeaderMap::new(),
+            String::with_capacity(0),
+        ),
+        Interaction::ModalSubmit => (
+            StatusCode::ACCEPTED,
+            HeaderMap::new(),
+            String::with_capacity(0),
+        ),
+    }
 }
