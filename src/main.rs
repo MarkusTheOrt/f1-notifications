@@ -11,7 +11,7 @@ use axum::{
     routing::post,
 };
 use ed25519_dalek::{Signature, VerifyingKey};
-use reqwest::{header::CONTENT_TYPE, StatusCode};
+use reqwest::{StatusCode, header::CONTENT_TYPE};
 use sentry::{integrations::tracing::EventFilter, types::Dsn};
 use tower::ServiceBuilder;
 use tracing::info;
