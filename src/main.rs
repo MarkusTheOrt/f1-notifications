@@ -70,7 +70,7 @@ fn main() {
                 )
                 .into_make_service();
 
-            let tcp_listener = tokio::net::TcpListener::bind("127.1.3.5:80").await.unwrap();
+            let tcp_listener = tokio::net::TcpListener::bind("0.0.0.0:80").await.unwrap();
             info!("Listener bound to {}", tcp_listener.local_addr().unwrap());
             axum::serve(tcp_listener, router)
                 .with_graceful_shutdown(async {
